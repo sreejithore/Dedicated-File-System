@@ -65,6 +65,11 @@ def get_chunk_locations(filename):
     conn.close()
     return locations
 
+def receive_heartbeat(node_address):
+    """Catches the ping from the Data Nodes."""
+    print(f"💓 Heartbeat received from Data Node at {node_address}")
+    return True
+
 # --- SERVER STARTUP ---
 def start_master():
     init_db()
@@ -73,12 +78,15 @@ def start_master():
     server_address = ('0.0.0.0', 5000)
     server = xmlrpc.server.SimpleXMLRPCServer(server_address, allow_none=True)
     
-    # Register the functions so they can be accessed over the network
+    # Register the existing core functions
     server.register_function(register_file_chunks, "register_file_chunks")
     server.register_function(get_file_directory, "get_file_directory")
     server.register_function(get_chunk_locations, "get_chunk_locations")
     
-    print(f"🧠 Master Node is running on port 5000...")
+    # ---> NEW: Register the heartbeat function <---
+    server.register_function(receive_heartbeat, "receive_heartbeat")
+    
+    print("🧠 Master Node is running on port 5000...")
     print("Waiting for connections from Clients or Data Nodes...")
     try:
         server.serve_forever()
