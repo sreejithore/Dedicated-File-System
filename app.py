@@ -97,25 +97,37 @@ with col2:
                     
                     with text_col:
                         st.markdown(f"**📄 {filename}** ({status})")
-                    
+
                     with button_col:
-                        # Add a download button. (We use a unique 'key' so Streamlit doesn't get confused by multiple buttons)
                         if st.button("Download", key=f"dl_btn_{filename}"):
-                            
                             with st.spinner(f"Fetching chunks for {filename}..."):
-                                # Ask Master where the chunks are
+                                import os
+                                
+                                # 1. Ask Master where the chunks are
                                 chunk_locations = master_conn.get_chunk_locations(filename)
                                 
-                                # Extract just the chunk names from the database response
-                                chunk_names = [loc[0] for loc in chunk_locations]
+                                # Create a downloads folder if it doesn't exist
+                                if not os.path.exists("downloads"):
+                                    os.makedirs("downloads")
                                 
-                                # Do the reverse—download chunks and merge them back into a single usable file 
-                                success, path = stitch_file(filename, chunk_names)
+                                save_path = f"downloads/recovered_{filename}"
                                 
-                                if success:
-                                    st.success(f"Downloaded to {path}")
-                                else:
-                                    st.error(f"Failed: {path}")
+                                # 2. Download from Data Nodes and stitch together
+                                try:
+                                    with open(save_path, 'wb') as outfile:
+                                        for chunk_name, node_ip in chunk_locations:
+                                            # Connect to the specific Data Node holding this chunk
+                                            node_conn = xmlrpc.client.ServerProxy(f"http://{node_ip}")
+                                            
+                                            # Fetch the binary data over the network
+                                            chunk_data = node_conn.get_chunk(chunk_name)
+                                            
+                                            # Write it to our final stitched file
+                                            outfile.write(chunk_data.data)
+                                            
+                                    st.success(f"Successfully downloaded to: {save_path}")
+                                except Exception as e:
+                                    st.error(f"Download failed. A Data Node might be offline: {e}")
             else:
                 st.info("ℹ️ No files currently in the system.")
                 
