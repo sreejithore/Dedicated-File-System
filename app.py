@@ -45,33 +45,34 @@ with col1:
 
     if uploaded_file is not None and st.session_state['connected']:
         if st.button("Upload to DFS"):
-            # The "Behind the Scenes" Console
             with st.status("Processing Upload...", expanded=True) as status:
                 st.write("1. Reading file into memory...")
                 file_bytes = uploaded_file.getvalue()
                 
                 st.write(f"2. Splitting '{uploaded_file.name}' into 2MB chunks...")
-                # Call our logic function
-                chunk_names = split_file(file_bytes, uploaded_file.name)
-                time.sleep(1) # Simulating network delay
+                # Get the list of chunks and their raw data
+                chunks = split_file(file_bytes, uploaded_file.name)
                 
-                st.write("3. Contacting Master for node addresses...")
-                
-                # Connect to the Master Node over the network
+                st.write("3. Contacting Master for metadata registration...")
                 master_url = f"http://{st.session_state.get('master_ip', '127.0.0.1')}:{st.session_state.get('master_port', '5000')}"
                 master_conn = xmlrpc.client.ServerProxy(master_url)
                 
-                # Prepare the chunk data format the Master expects
-                # (For now, we will use a dummy IP for the node_ip until we build Module 3)
-                chunk_data = [{'chunk_name': name, 'node_ip': '127.0.0.1:5001'} for name in chunk_names]
+                # Prepare the data for the Master (Note: we use the 5001 Data Node port here)
+                metadata = [{'chunk_name': c['chunk_name'], 'node_ip': '127.0.0.1:5001'} for c in chunks]
+                master_conn.register_file_chunks(uploaded_file.name, metadata)
                 
-                # Call the Master's function over the network!
-                master_conn.register_file_chunks(uploaded_file.name, chunk_data)
+                st.write(f"4. Sending {len(chunks)} chunks to Data Node...")
+                # Connect directly to the Data Node
+                data_node_conn = xmlrpc.client.ServerProxy("http://127.0.0.1:5001")
                 
-                st.write(f"4. Sending {len(chunk_names)} chunks to Data Nodes...")
+                for chunk in chunks:
+                    # Wrap the raw bytes in xmlrpc.client.Binary for safe network travel
+                    binary_wrapper = xmlrpc.client.Binary(chunk['raw_bytes'])
+                    # Send it over the network to the Data Node!
+                    data_node_conn.store_chunk(chunk['chunk_name'], binary_wrapper)
                 
                 status.update(label="Upload Complete!", state="complete", expanded=False)
-                st.success(f"{uploaded_file.name} successfully chunked and stored!")
+                st.success(f"{uploaded_file.name} successfully chunked and stored across the network!")
                 
 with col2:
     st.subheader("Files in DFS")
