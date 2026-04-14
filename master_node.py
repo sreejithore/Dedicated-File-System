@@ -49,6 +49,21 @@ def init_db():
 # --- RPC EXPOSED FUNCTIONS ---
 # These functions can be called over the network by the Client or Data Nodes
 
+def delete_file_metadata(filename):
+    """Deletes the file's chunk map from the Master's database."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        # Delete all rows where the filename matches
+        cursor.execute("DELETE FROM file_chunks WHERE filename=?", (filename,))
+        conn.commit()
+        conn.close()
+        print(f"🗑️ [INFO] Deleted metadata for file: {filename}")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Database error during deletion: {e}")
+        return False
+
 def register_file_chunks(filename, chunk_data):
     """
     Called by the Client when uploading. 
@@ -110,6 +125,9 @@ def start_master():
     
     # Register the active nodes tracking function
     server.register_function(get_active_nodes, "get_active_nodes")
+
+    # Register the delete function
+    server.register_function(delete_file_metadata, "delete_file_metadata")
     
     print("🧠 Master Node is running on port 5000...")
     print("Waiting for connections from Clients or Data Nodes...")

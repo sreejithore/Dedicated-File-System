@@ -48,6 +48,19 @@ def get_chunk(chunk_name):
         print(f"[ERROR] Failed to read chunk: {e}")
         return None
 
+def delete_chunk(chunk_name):
+    """Physically deletes a chunk from the node's hard drive."""
+    file_path = os.path.join(STORAGE_DIR, chunk_name)
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            print(f"🗑️ [DELETED] {chunk_name} physically removed from disk.")
+            return True
+        except Exception as e:
+            print(f"⚠️ [ERROR] Could not delete {chunk_name}: {e}")
+            return False
+    return True # If the file is already gone, we consider it a success
+
 # --- HEARTBEAT MECHANISM ---
 '''
 def send_heartbeat():
@@ -87,6 +100,7 @@ def start_data_node():
     
     server.register_function(store_chunk, "store_chunk")
     server.register_function(get_chunk, "get_chunk")
+    server.register_function(delete_chunk, "delete_chunk")
     
     print(f"💾 Data Node is running on port {NODE_PORT}...")
     print(f"Saving files to: {STORAGE_DIR}")
