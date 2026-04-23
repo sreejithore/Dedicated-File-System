@@ -40,7 +40,7 @@ with st.sidebar:
 @st.fragment(run_every=2)
 def display_cluster_health():
     st.markdown("---")
-    st.subheader("🖥️ Live Cluster Health Status")
+    st.subheader("🖥️ Live Cluster Health & Analytics")
     
     # Only check the health if the user has clicked "Connect" in the sidebar
     if st.session_state.get('connected', False):
@@ -49,26 +49,60 @@ def display_cluster_health():
             master_url = f"http://{st.session_state.get('master_ip', '127.0.0.1')}:{st.session_state.get('master_port', '5000')}"
             master_conn = xmlrpc.client.ServerProxy(master_url)
             
-            # Ask the Master who is currently alive
+            # Ask the Master who is currently alive AND fetch the new stats
             active_nodes = master_conn.get_active_nodes()
+            cluster_stats = master_conn.get_cluster_stats()
             
-            # Create a mini 2-column layout just for the health monitors
+            # --- 1. HEALTH INDICATORS ---
             health_col1, health_col2 = st.columns(2)
             
-            # Monitor Node A (5001)
             with health_col1:
                 if "127.0.0.1:5001" in active_nodes:
                     st.success("### 🟢 Node A (5001): **ACTIVE**")
                 else:
                     st.error("### 🔴 Node A (5001): **OFFLINE**")
                     
-            # Monitor Node B (5002)
             with health_col2:
                 if "127.0.0.1:5002" in active_nodes:
                     st.success("### 🟢 Node B (5002): **ACTIVE**")
                 else:
                     st.error("### 🔴 Node B (5002): **OFFLINE**")
-                    
+            
+            # --- 2. LIVE METRICS ---
+            st.markdown("### 📊 Storage Analytics")
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+            
+            total_files = cluster_stats.get("total_files", 0)
+            rep_factor = cluster_stats.get("replication_factor", 2)
+            node_storage = cluster_stats.get("node_storage_mb", {})
+            
+            # Simulate a network capacity (e.g., 500MB per active node)
+            network_capacity = len(active_nodes) * 500
+            
+            with metric_col1:
+                st.metric("Total Files Stored", total_files)
+            with metric_col2:
+                st.metric("Current Replication Factor", rep_factor)
+            with metric_col3:
+                st.metric("Total Network Capacity", f"{network_capacity} MB")
+                
+            # --- 3. DATA DISTRIBUTION CHART ---
+            if node_storage:
+                st.markdown("**Data Distribution Across Nodes (MB)**")
+                import pandas as pd
+                
+                # Format the data for Streamlit's bar chart
+                chart_data = pd.DataFrame(
+                    list(node_storage.values()), 
+                    index=list(node_storage.keys()), 
+                    columns=["Storage Used (MB)"]
+                )
+                
+                # Display the bar chart
+                st.bar_chart(chart_data, height=200)
+            else:
+                st.info("ℹ️ No data is currently stored in the cluster.")
+                
         except Exception as e:
             st.warning("⚠️ Cannot communicate with Master Node to check cluster health.")
     else:
