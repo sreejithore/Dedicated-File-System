@@ -296,7 +296,7 @@ with col2:
                                         if not chunk_recovered:
                                             raise Exception("Missing or corrupt chunks prevented preview.")
                                     
-                                    st.image(file_bytes, caption=f"Live Preview: {filename}", use_container_width=True)
+                                    st.image(bytes(file_bytes), caption=f"Live Preview: {filename}", use_container_width=True)
                                 except Exception as e:
                                     # ---> NEW: Toast error
                                     st.toast(f"❌ Preview failed: {e}")
