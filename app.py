@@ -1,5 +1,7 @@
 import streamlit as st
 import time
+import os
+import hashlib  
 import xmlrpc.client
 from client_logic import split_file, stitch_file
 
@@ -26,7 +28,6 @@ with st.sidebar:
         # Save the typed IP and Port into session state so the upload logic can use them later
         st.session_state['master_ip'] = master_ip
         st.session_state['master_port'] = master_port
-        # ---------------------------------
         
         st.success(f"Connected to Master at {master_ip}:{master_port}!")
     
@@ -34,6 +35,49 @@ with st.sidebar:
         st.success("🟢 System Status: ONLINE")
     else:
         st.error("🔴 System Status: OFFLINE")
+
+# --- CLUSTER HEALTH DASHBOARD ---
+@st.fragment(run_every=2)
+def display_cluster_health():
+    st.markdown("---")
+    st.subheader("🖥️ Live Cluster Health Status")
+    
+    # Only check the health if the user has clicked "Connect" in the sidebar
+    if st.session_state.get('connected', False):
+        try:
+            # Re-establish connection to the Master
+            master_url = f"http://{st.session_state.get('master_ip', '127.0.0.1')}:{st.session_state.get('master_port', '5000')}"
+            master_conn = xmlrpc.client.ServerProxy(master_url)
+            
+            # Ask the Master who is currently alive
+            active_nodes = master_conn.get_active_nodes()
+            
+            # Create a mini 2-column layout just for the health monitors
+            health_col1, health_col2 = st.columns(2)
+            
+            # Monitor Node A (5001)
+            with health_col1:
+                if "127.0.0.1:5001" in active_nodes:
+                    st.success("### 🟢 Node A (5001): **ACTIVE**")
+                else:
+                    st.error("### 🔴 Node A (5001): **OFFLINE**")
+                    
+            # Monitor Node B (5002)
+            with health_col2:
+                if "127.0.0.1:5002" in active_nodes:
+                    st.success("### 🟢 Node B (5002): **ACTIVE**")
+                else:
+                    st.error("### 🔴 Node B (5002): **OFFLINE**")
+                    
+        except Exception as e:
+            st.warning("⚠️ Cannot communicate with Master Node to check cluster health.")
+    else:
+        st.info("Please connect to the Master Node in the sidebar to view live cluster health.")
+    
+    st.markdown("---")
+
+display_cluster_health()
+# --------------------------------
 
 # --- 2. MAIN DASHBOARD: User Actions ---
 col1, col2 = st.columns(2)
@@ -80,8 +124,12 @@ with col1:
                         target_node = active_nodes[(index + r) % len(active_nodes)]
                         assigned_nodes.append(target_node)
                         
-                        # Tell the Master about ALL copies
-                        metadata.append({'chunk_name': chunk['chunk_name'], 'node_ip': target_node})
+                        # ---> NEW: Tell the Master about ALL copies, including the HASH
+                        metadata.append({
+                            'chunk_name': chunk['chunk_name'], 
+                            'node_ip': target_node,
+                            'hash': chunk['hash'] 
+                        })
                         
                     chunk['assigned_nodes'] = assigned_nodes # Save for the transfer step
                 
@@ -127,15 +175,13 @@ with col2:
                     with dl_col:
                         if st.button("Download", key=f"dl_btn_{filename}"):
                             
-                            # ---> NEW: Check if the cluster is alive BEFORE trying to download <---
+                            # Check if the cluster is alive BEFORE trying to download 
                             active_nodes = master_conn.get_active_nodes()
                             
                             if not active_nodes:
                                 st.error("⚠️ Both Data Nodes are currently unavailable. Please wait and try again after some time.")
                             else:
                                 with st.spinner(f"Fetching chunks for {filename}..."):
-                                    import os
-                                    
                                     # Ask Master where the chunks are
                                     chunk_locations = master_conn.get_chunk_locations(filename)
                                     
@@ -150,34 +196,42 @@ with col2:
                                     
                                     # Download from Data Nodes and stitch together
                                     try:
-                                        # Group the locations by chunk name so we know our backups
-                                        # Example: {'part1': ['127.0.0.1:5001', '127.0.0.1:5002']}
+                                        # ---> NEW: Group the locations AND save the expected hash
                                         chunk_map = {}
-                                        for c_name, n_ip in chunk_locations:
+                                        for c_name, n_ip, c_hash in chunk_locations:
                                             if c_name not in chunk_map:
-                                                chunk_map[c_name] = []
-                                            chunk_map[c_name].append(n_ip)
+                                                chunk_map[c_name] = {'nodes': [], 'hash': c_hash}
+                                            chunk_map[c_name]['nodes'].append(n_ip)
                                             
                                         with open(save_path, 'wb') as outfile:
                                             for chunk_name in chunk_names:
                                                 chunk_recovered = False
+                                                expected_hash = chunk_map[chunk_name]['hash']
                                                 
-                                                # Try each node that holds this chunk until one works
-                                                for target_node in chunk_map.get(chunk_name, []):
+                                                # Try each node that holds this chunk until one works AND passes the hash check
+                                                for target_node in chunk_map[chunk_name]['nodes']:
                                                     try:
                                                         node_conn = xmlrpc.client.ServerProxy(f"http://{target_node}")
                                                         chunk_data = node_conn.get_chunk(chunk_name)
                                                         
-                                                        outfile.write(chunk_data.data)
-                                                        chunk_recovered = True
-                                                        break # Success! Stop trying backups for this chunk.
+                                                        # ---> DATA INTEGRITY CHECK <---
+                                                        downloaded_hash = hashlib.sha256(chunk_data.data).hexdigest()
+                                                        
+                                                        if downloaded_hash == expected_hash:
+                                                            outfile.write(chunk_data.data)
+                                                            chunk_recovered = True
+                                                            break # Success! Hash matches.
+                                                        else:
+                                                            st.warning(f"⚠️ CORRUPTION DETECTED: {chunk_name} on {target_node} failed hash verification! Discarding and trying backup...")
+                                                            print(f"[CORRUPT] {chunk_name} from {target_node}")
+                                                            
                                                     except Exception:
                                                         print(f"[WARNING] Node {target_node} is down. Trying backup...")
                                                 
                                                 if not chunk_recovered:
-                                                    raise Exception(f"All nodes holding {chunk_name} are completely offline!")
+                                                    raise Exception(f"All nodes holding {chunk_name} are completely offline or corrupted!")
                                                 
-                                        st.success(f"Successfully downloaded to: {save_path}")
+                                        st.success(f"Successfully downloaded & verified to: {save_path}")
                                     except Exception as e:
                                         st.error(f"Download failed: {e}")
 
@@ -190,7 +244,9 @@ with col2:
                                     chunk_locations = master_conn.get_chunk_locations(filename)
                                     
                                     # 2. Tell every Data Node holding a piece to physically delete it
-                                    for chunk_name, node_ip in chunk_locations:
+                                    for loc in chunk_locations:
+                                        chunk_name = loc[0]
+                                        node_ip = loc[1]
                                         try:
                                             node_conn = xmlrpc.client.ServerProxy(f"http://{node_ip}")
                                             node_conn.delete_chunk(chunk_name)
